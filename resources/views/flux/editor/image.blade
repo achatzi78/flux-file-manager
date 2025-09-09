@@ -1,0 +1,397 @@
+@props(['id'])
+
+@php($picker_key = "picker_{$id}")
+
+{{-- 1) Mount your picker-mode filemanager for this editor --}}
+<flux:modal
+    name="editorImageFileManagerModal_{{ $picker_key }}"
+    class="min-w-9/10 sm:min-w-xl md:min-w-2xl lg:min-w-4xl xl:min-w-6xl 2xl:min-w-7xl h-3/4"
+>
+    <div class="py-12">
+        <livewire:backend.generic.flux-file-manager
+            wire:key="{{ $picker_key }}"
+            name="{{ $picker_key }}"
+            mode="picker"
+            category="image"
+            path="images"
+        />
+    </div>
+</flux:modal>
+
+{{-- 2) Toolbar button that opens the Image Settings modal --}}
+<flux:modal.trigger name="editorImageModal_{{ $picker_key }}">
+    <flux:editor.button id="editorImageModalBtn_{{ $picker_key }}" tooltip="{{ __('image') }}">
+        <flux:icon.photo class="size-5!"/>
+    </flux:editor.button>
+</flux:modal.trigger>
+
+{{-- 3) The Image Settings modal --}}
+<flux:modal
+    wire:key="editorImageModal_{{ $picker_key }}"
+    name="editorImageModal_{{ $picker_key }}"
+    class="w-9/10 xl:w-8/10"
+>
+    <div
+        x-data="editorImage_{{ $picker_key }}()"
+        x-init="init()"
+        class="space-y-4 grid grid-cols-1 gap-4"
+    >
+        {{-- url --}}
+        <flux:field>
+            <flux:label>{{ __('url') }}</flux:label>
+            <flux:input.group>
+                <flux:input x-model="src"/>
+                <flux:button icon="folder-open" @click="openPicker()">
+                    {{ __('browse') }}
+                </flux:button>
+            </flux:input.group>
+        </flux:field>
+
+        {{-- alt text --}}
+        <flux:input x-model="alt" label="{{ __('alt text') }}"/>
+
+        {{-- width & height --}}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <flux:field>
+                <flux:label>{{ __('width') }} (px)</flux:label>
+                <flux:input.group>
+                    <flux:input x-model.number="width" type="number"/>
+                    <flux:input.group.suffix>
+                        <flux:checkbox x-model="lockRatio" title="{{ __('lock ratio') }}"/>
+                    </flux:input.group.suffix>
+                </flux:input.group>
+
+                <flux:description x-show="naturalWidth">
+                    {{ __('original') }}: <span x-text="naturalWidth"></span>
+                </flux:description>
+            </flux:field>
+
+            <flux:field>
+                <flux:label>{{ __('height') }} (px)</flux:label>
+                <flux:input x-model.number="height" type="number"/>
+                <flux:description>
+                    {{ __('original') }}: <span x-text="naturalHeight"></span>
+                </flux:description>
+            </flux:field>
+        </div>
+
+        {{-- border & radius --}}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <flux:field>
+                <flux:label>{{ __('border width') }} (px)</flux:label>
+                <flux:input.group>
+                    <flux:input x-model.number="borderWidth" type="number"/>
+                    <flux:input.group.suffix>
+                        <input x-model="borderColor" type="color" title="{{ __('border color') }}"/>
+                    </flux:input.group.suffix>
+                </flux:input.group>
+            </flux:field>
+
+            <flux:input x-model.number="radius" type="number" label="{{ __('border radius') }} (px)"/>
+        </div>
+
+        {{-- alignment --}}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <flux:select x-model="align" label="{{ __('align') }}">
+                <flux:select.option value="none">{{ __('none') }}</flux:select.option>
+                <flux:select.option value="left">{{ __('left') }}</flux:select.option>
+                <flux:select.option value="right">{{ __('right') }}</flux:select.option>
+            </flux:select>
+        </div>
+
+        {{-- additional styles --}}
+        <div class="grid grid-cols-1 gap-4">
+            <flux:input x-model.number="additionalStyles" label="{{ __('additional styles') }}"/>
+        </div>
+
+        {{-- Live preview --}}
+        <div x-ref="previewContainer" class="p-2 text-center border border-zinc-800/10 dark:border-white/20">
+            <img
+                :src="src"
+                :alt="alt"
+                :style="previewStyle()"
+                class="inline-block"
+            />
+        </div>
+
+        {{-- Save --}}
+        <div class="flex justify-end">
+            <flux:button
+                variant="primary"
+                icon="check"
+                @click="apply()"
+                class="capitalize"
+            >
+                {{ __('save') }}
+            </flux:button>
+        </div>
+    </div>
+</flux:modal>
+
+{{-- 4) Alpine component (scoped per-editor via {{ $picker_key }}) --}}
+<script>
+    document.addEventListener('alpine:init', () => {
+        Alpine.data('editorImage_{{ $picker_key }}', () => ({
+            // — State —
+            pickerKey: '{{ $picker_key }}',
+            src: '',
+            alt: '',
+            width: null,
+            height: null,
+            lockRatio: true,
+            borderColor: '#000000',
+            borderWidth: 0,
+            radius: 0,
+            align: 'none',
+            naturalWidth: null,
+            naturalHeight: null,
+            additionalStyles: '',
+
+            // — On modal open —
+            init() {
+                const wrapper = this.$el.closest('[data-flux-editor]');
+                const editor = wrapper?.__editor;
+                if (!editor) return;
+
+                const {node} = editor.state.selection;
+                if (node?.type.name === 'image') {
+                    this.initFromImage(node);
+                }
+
+                // — Watchers for lockRatio behavior —
+                this.$watch('width', newW => {
+                    if (!this.lockRatio || !newW || !this.naturalWidth || !this.naturalHeight) return
+                    this.height = Math.round(newW * this.naturalHeight / this.naturalWidth)
+                });
+
+                this.$watch('height', newH => {
+                    if (!this.lockRatio || !newH || !this.naturalWidth || !this.naturalHeight) return
+                    this.width = Math.round(newH * this.naturalWidth / this.naturalHeight)
+                });
+
+                const pm = wrapper.querySelector('.ProseMirror')
+                if (pm) {
+                    pm.addEventListener('dblclick', event => {
+                        const el = event.target;
+                        if (el.tagName === 'IMG') {
+                            this.initFromImage(el);
+
+                            Flux.modal('editorImageModal_{{ $picker_key }}').show();
+                        }
+                    });
+
+                    pm.addEventListener('click', event => {
+                        const el = event.target;
+                        if (el.tagName === 'IMG') {
+                            this.initFromImage(el);
+
+                            document.getElementById('editorImageModalBtn_{{ $picker_key }}').classList.add('text-zinc-800', 'dark:text-white');
+                        }
+                        else {
+                            // clicked outside any image—reset everything
+                            this.src = '';
+                            this.alt = '';
+                            this.width = null;
+                            this.height = null;
+                            this.borderWidth = 0;
+                            this.borderColor = '#000000';
+                            this.radius = 0;
+                            this.align = 'none';
+                            this.additionalStyles = '';
+                            this.naturalWidth = null;
+                            this.naturalHeight = null;
+
+                            document.getElementById('editorImageModalBtn_{{ $picker_key }}').classList.remove('text-zinc-800', 'dark:text-white');
+                        }
+                    })
+                }
+            },
+
+            initFromImage(elementOrNode) {
+                // --- pull src, alt, width, height, style string ---
+                let src, alt, width, height, style;
+
+                if (elementOrNode.nodeType) {
+                    // a real DOM <img>
+                    src = elementOrNode.getAttribute('src');
+                    alt = elementOrNode.getAttribute('alt') || '';
+                    width = elementOrNode.getAttribute('width');
+                    height = elementOrNode.getAttribute('height');
+                    style = elementOrNode.getAttribute('style') || '';
+                }
+                else {
+                    // a ProseMirror image node
+                    src = elementOrNode.attrs.src;
+                    alt = elementOrNode.attrs.alt || '';
+                    width = elementOrNode.attrs.width;
+                    height = elementOrNode.attrs.height;
+                    style = elementOrNode.attrs.style || '';
+                }
+
+                // normalize numeric attrs
+                width = width ? parseInt(width) : null;
+                height = height ? parseInt(height) : null;
+
+                const getStyle = prop => {
+                    const m = new RegExp(`${prop}:([^;]+)`).exec(style);
+                    return m && m[1] ? m[1].trim() : '';
+                }
+
+                // if no explicit width/height, look in style: “width:123px;”
+                if (!width) {
+                    const ws = getStyle('width');
+                    if (ws.endsWith('px')) width = parseInt(ws);
+                }
+                if (!height) {
+                    const hs = getStyle('height');
+                    if (hs.endsWith('px')) height = parseInt(hs);
+                }
+
+                // extract the rest
+                const borderColor = getStyle('border-color') || '#000000';
+                const borderWidth = parseInt(getStyle('border-width')) || 0;
+                const radius = parseInt(getStyle('border-radius')) || 0;
+                const align = getStyle('float') || 'none';
+
+                // collect any other styles into additionalStyles
+                const knownProps = ['width', 'height', 'border-width', 'border-radius', 'float', 'border-color'];
+                let additional = style
+                    .split(';')
+                    .map(s => s.trim())
+                    .filter(s => s)
+                    .filter(s => {
+                        const key = s.split(':')[0].trim()
+                        return key && !knownProps.includes(key)
+                    })
+                    .join(';');
+                if (additional) additional += ';';
+
+                // assign back to Alpine state
+                this.src = src;
+                this.alt = alt;
+                this.width = width;
+                this.height = height;
+                this.borderColor = borderColor;
+                this.borderWidth = borderWidth;
+                this.radius = radius;
+                this.align = align;
+                this.additionalStyles = additional;
+
+                // load natural dimensions if needed
+                const img = new Image();
+                img.src = src;
+                img.onload = () => {
+                    this.naturalWidth = img.naturalWidth;
+                    this.naturalHeight = img.naturalHeight;
+
+                    // legacy: if still unset, default to natural
+                    if (!this.width) this.width = img.naturalWidth;
+                    if (!this.height) this.height = img.naturalHeight;
+                }
+            },
+
+            // — Open the filemanager picker —
+            openPicker() {
+                Flux.modal('editorImageFileManagerModal_{{ $picker_key }}').show();
+
+                // 4) capture the URL when the user picks a file
+                const onSelect = (event) => {
+                    const {url, filemanager} = event.detail || {}
+                    if (filemanager === this.pickerKey) {
+                        this.src = url
+
+                        const img = new Image();
+                        img.src = url;
+                        img.onload = () => {
+                            // only initialize width/height if they’re still unset
+                            if (!this.width && !this.height) {
+                                this.width = img.naturalWidth;
+                                this.height = img.naturalHeight;
+                                this.naturalWidth = img.naturalWidth;
+                                this.naturalHeight = img.naturalHeight;
+                            }
+                        };
+                        Flux.modal('editorImageFileManagerModal_{{ $picker_key }}').close();
+                        window.removeEventListener('fileSelected', onSelect)
+                    }
+                }
+
+                window.addEventListener('fileSelected', onSelect)
+            },
+
+            // — Build inline style for preview/insertion —
+            previewStyle() {
+                // grab the container’s max width
+                const container = this.$refs.previewContainer;
+                const maxW = container?.clientWidth;
+
+                // start from the user‐entered values
+                let w = this.width;
+                let h = this.height;
+
+                // if no dims at all yet, but we know natural, use natural
+                if ((!w && !h) && this.naturalWidth && this.naturalHeight) {
+                    w = this.naturalWidth;
+                    h = this.naturalHeight;
+                }
+
+                // apply ratio locking & clamping
+                if (this.lockRatio && this.naturalWidth && this.naturalHeight) {
+                    const ratio = this.naturalHeight / this.naturalWidth;
+
+                    if (w) {
+                        // clamp to container if needed
+                        if (maxW && w > maxW) {
+                            w = maxW;
+                        }
+                        h = Math.round(w * ratio);
+                    } else if (h) {
+                        w = Math.round(h / ratio);
+                    }
+                }
+
+                // build the style string
+                let s = '';
+                if (w) s += `width:${w}px;`;
+                if (h) s += `height:${h}px;`;
+                if (this.borderWidth) {
+                    s += `border:${this.borderWidth}px solid ${this.borderColor};`;
+                }
+                if (this.radius) s += `border-radius:${this.radius}px;`;
+                if (this.align !== 'none') s += `float:${this.align};`;
+
+                return s + this.additionalStyles;
+            },
+
+            // — Insert or update the image node in Tiptap —
+            apply() {
+                const wrapper = this.$el.closest('[data-flux-editor]');
+                const editor = wrapper?.__editor;
+                if (!editor) return;
+
+                const attrs = {
+                    src: this.src,
+                    alt: this.alt,
+                    style: this.previewStyle(),
+                };
+
+                // use the high-level commands
+                const chain = editor.chain().focus();
+
+                //editor.commands.setImage(attrs);
+
+                // if you’re on an existing <image/>, update its attributes,
+                // otherwise insert a brand-new one:
+                if (editor.isActive('image')) {
+                    chain.updateAttributes('image', attrs);
+                } else {
+                    chain.setImage(attrs);
+                }
+
+                chain.run();
+
+                Flux.modal('editorImageModal_{{ $picker_key }}').close();
+            },
+        }));
+    });
+</script>
