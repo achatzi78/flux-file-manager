@@ -113,4 +113,18 @@ document.addEventListener('flux:editor', (e) => {
 });
 ```
 
-Then use the toolbar button for the editor (resources/views/flux/editor/image.blade)
+In the initialization of the editor, add the button for the image (resources/view/flux/editor/image.blade)
+```blade
+<flux:editor
+    toolbar="heading | bold italic strike underline align | bullet ordered blockquote | subscript superscript highlight | link image | code | view-source ~ undo | redo"
+    wire:key="descriptionEditor"
+    id="descriptionEditor"
+    name="description_editor"
+    wire:model="description"
+    label="{{ __('description') }}"
+    :invalid="$errors->has('description')"
+/>
+```
+
+
+Please note that the id attribute in the editor is important because this way the filemanager modal knows with which editor to communicate. You can have multiple editors in the same page, as long as each one has each unique id. When you click the toolbar button, the popup will open and then click on the browse button to open a new modal with the filemanager. When you select an image, the attributes will be populated (src, alt, width, height, border, radius and style). Similarly, when you double click an image in the editor (or single click and then the toolbar button) the attributes will be populated from that.
